@@ -1,1 +1,193 @@
+byte nums [10] [7] ={
+  //G F A B E D C
+   {0,1,1,1,1,1,1}, //0
+   {0,0,0,1,0,0,1}, //1
+   {1,0,1,1,1,1,0}, //2
+   {1,0,1,1,0,1,1}, //3
+   {1,1,0,1,0,0,1}, //4
+   {1,1,1,0,0,1,1}, //5
+   {1,1,1,0,1,1,1}, //6
+   {0,0,1,1,0,0,1}, //7
+   {1,1,1,1,1,1,1}, //8
+   {1,1,1,1,0,1,1}  //9
+};
 
+// Common Cathode Shift Register Lookup Table (0-9)
+const byte digitPatterns[10] = {
+  0b00111111, // 0
+  0b00000110, // 1
+  0b01011011, // 2
+  0b01001111, // 3
+  0b01100110, // 4
+  0b01101101, // 5
+  0b01111101, // 6
+  0b00000111, // 7
+  0b01111111, // 8
+  0b01101111  // 9
+};
+
+int interval = 1000; // NOTE: 8ms/tick = ~125x real time. Set to 1000 for real 45/15 min sessions.
+unsigned long previous = 0;
+int pins [] = {2,3,4,5,6,7,8};
+int dpins [] = {12,11,10,9};
+boolean runner = true;
+String times = "45";
+int num1 = 0;
+int num2 = 0;
+int num3 = 0;
+int num4 = 0;
+
+// Session Tracking & Shift Register Pins
+int SessionCount = 0;
+const int latchPin = A3;  // Pin 12 on 74HC595 (ST_CP)
+const int clockPin = A2;  // Pin 11 on 74HC595 (SH_CP)
+const int dataPin  = A4;  // Pin 14 on 74HC595 (DS)
+
+boolean isBreak = false;
+
+// Edge-detection state for the cycle-advance button (A1).
+boolean lastButtonState = HIGH;
+
+void setup() {
+  for (int i = 2; i < 13; i++){
+    pinMode(i, OUTPUT);
+  }
+  pinMode(A5, OUTPUT);
+
+  pinMode(A1, INPUT_PULLUP);
+  pinMode(A0, INPUT_PULLUP);
+  pinMode(13, INPUT);
+
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+
+  // Show 0 on session display at power up
+  displaySession(SessionCount);
+
+  Serial.begin(9600);
+}
+
+void loop() {
+  if (runner){
+    unsigned long current = millis();
+
+    if(current - previous >= interval){
+      previous = current;
+      num1++;
+      if(num1 > 9) {
+        num1 = 0;
+        num2++;
+        if (num2 >= 6){
+           num2 = 0;
+           num3++;
+           if(num3 > 9){
+            num3 = 0;
+            num4++;
+           }
+        }
+      }
+    }
+
+    printNum(num1, 1);
+    printNum(num2, 2);
+    printNum(num3, 3);
+    printNum(num4, 4);
+    stoptimer(times);
+  } else {
+    printFinal(times);
+
+    // Silence alarm button (A0). Pressed = LOW with INPUT_PULLUP.
+    if(digitalRead(A0) == LOW){
+      digitalWrite(A5, LOW);
+    }
+    
+    boolean currentButtonState = digitalRead(A1);
+
+    // Advance cycle button (A1). Pressed = LOW with INPUT_PULLUP.
+    if (currentButtonState == LOW && lastButtonState == HIGH) {
+      delay(50); // Debounce
+      digitalWrite(A5, LOW); // Silence alarm on start
+
+      if (isBreak == false) {
+        // Just finished 45 mins -> Switch to 15 min Break & increment session display
+        isBreak = true;
+        times = "15";
+        SessionCount++;
+        if (SessionCount > 9) SessionCount = 0;
+        displaySession(SessionCount);
+      } else {
+        // Just finished Break -> Switch back to 45 min Work
+        isBreak = false;
+        times = "45";
+      }
+
+      num1 = 0;
+      num2 = 0;
+      num3 = 0;
+      num4 = 0;
+      runner = true;
+    }
+
+    lastButtonState = currentButtonState;
+  }
+}
+
+void printNum(int number, int digit){
+  clearAll();
+
+  if(digit == 1){
+    digitalWrite(12, LOW);
+  } else if(digit == 2){
+    digitalWrite(11, LOW);
+  } else if(digit == 3){
+    digitalWrite(10, LOW);
+  } else {
+    digitalWrite(9, LOW);
+  }
+
+  for(int i = 0; i <= 6; i++){
+    if(nums[number][i] == 1){
+      digitalWrite(pins[i], HIGH);
+    } else {
+      digitalWrite(pins[i], LOW);
+    }
+  }
+}
+
+void clearAll(){
+  for(int i = 2; i < 9; i++){
+    digitalWrite(i, LOW);
+  }
+  digitalWrite(12, HIGH);
+  digitalWrite(11, HIGH);
+  digitalWrite(10, HIGH);
+  digitalWrite(9, HIGH);
+}
+
+void stoptimer(String minutes){
+  int first = minutes.charAt(0) - '0';
+  int second = minutes.charAt(1) - '0';
+
+  if(first == num4 && second == num3){
+    runner = false;
+    clearAll();
+    digitalWrite(A5, HIGH); // Alarm ON
+    lastButtonState = HIGH; // Avoid false edge trigger next loop
+  }
+}
+
+void printFinal(String minutes){
+  int first = minutes.charAt(0) - '0';
+  int second = minutes.charAt(1) - '0';
+  printNum(first, 4);
+  printNum(second, 3);
+  printNum(0, 2);
+  printNum(0, 1);
+}
+
+void displaySession(int number) {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, digitPatterns[number]);
+  digitalWrite(latchPin, HIGH);
+}
